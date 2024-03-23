@@ -1,3 +1,5 @@
+Rita's Password Manager
+----------------------------------------------------------------------------------------------------
 This program is written in C++ programming language4, C++ is a cross-platform language which signifies that it can be used on both Windows and Linux. It is a compiled language, this means that it needs more than a terminal to run, which leads to the necessity of a compiler. After compiling the source code file, it leads to the creation of an executable file that we have to run to execute the compiled code.
 
 To use this application, the user is firstly greeted with a message stating, “Welcome to Rita’s Password Manager!”. If they are a new user, they choose (1) and if they are a returning user to the application they choose (2). 
