@@ -1,18 +1,85 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <limits>
 #include <cstdlib> // For system commands
 #include <ctime>   // For seeding the random number generator
-#include <unordered_map>
+#include <filesystem>
+
+#define MAX_USERS 100 // Define a maximum number of users
+
+struct PasswordNode {
+    std::string label;
+    std::string password;
+    PasswordNode* next;
+
+    PasswordNode(std::string lbl, std::string pwd) : label(lbl), password(pwd), next(nullptr) {}
+};
 
 struct User {
     std::string name;
     std::string email;
-    std::string password;
+    std::string password; // User's own password to access the manager
+    PasswordNode* passwordsHead; // Head of the linked list of passwords
+
+    User(std::string nm, std::string eml, std::string pwd)
+        : name(nm), email(eml), password(pwd), passwordsHead(nullptr) {}
 };
 
-std::unordered_map<std::string, User*> users;
+User* users[MAX_USERS]; // Array to hold user pointers
+int userCount = 0; // Track the number of users
+
+void removePassword(User& user, const std::string& label) {
+    PasswordNode* curr = user.passwordsHead, * prev = nullptr;
+    while (curr != nullptr && curr->label != label) {
+        prev = curr;
+        curr = curr->next;
+    }
+    if (curr == nullptr) return; // Not found
+
+    if (prev == nullptr) {
+        // Removing the first node
+        user.passwordsHead = curr->next;
+    }
+    else {
+        prev->next = curr->next;
+    }
+    delete curr; // Free the removed node
+    std::cout << "You have successfully removed your password! \n";
+}
+
+void deletePassword(User& user, const std::string& label) {
+    PasswordNode* curr = user.passwordsHead, * prev = nullptr;
+    while (curr != nullptr && curr->label != label) {
+        prev = curr;
+        curr = curr->next;
+    }
+    if (curr == nullptr) {
+        std::cout << "Password label not found.\n";
+        return;
+    }
+
+    if (prev == nullptr) user.passwordsHead = curr->next;
+    else prev->next = curr->next;
+
+    delete curr;
+
+    // Rewrite the user's file
+    std::ofstream userFile(user.email + ".txt", std::ios::trunc); // Open in truncate mode to overwrite
+    if (userFile.is_open()) {
+        userFile << user.email << '\n' << user.password << '\n' << user.name << '\n'; // Re-write user info
+        for (PasswordNode* node = user.passwordsHead; node != nullptr; node = node->next) {
+            userFile << node->label << '\n' << node->password << '\n';
+        }
+        userFile.close();
+    }
+    else {
+        std::cout << "Failed to open the file for updating passwords.\n";
+    }
+
+    std::cout << "You have successfully removed your password! \n";
+}
 
 void waitForExit() {
     std::cout << "\nPress Enter to exit...";
@@ -35,6 +102,23 @@ std::string generateRandomPassword() {
     return password;
 }
 
+std::string caesarEncrypt(const std::string& text, int shift = 3) {
+    std::string encrypted = "";
+    for (char c : text) {
+        if (isalpha(c)) {
+            char base = islower(c) ? 'a' : 'A';
+            encrypted += static_cast<char>(((c - base + shift) % 26) + base);
+        } else {
+            encrypted += c;
+        }
+    }
+    return encrypted;
+}
+
+std::string caesarDecrypt(const std::string& text, int shift = 3) {
+    return caesarEncrypt(text, 26 - shift); // Utilize encryption in reverse for decryption
+}
+
 bool promptForMore() {
     std::string choice;
     std::cout << "Would you like to do anything else today? (yes/no): ";
@@ -43,11 +127,73 @@ bool promptForMore() {
     return (choice == "yes" || choice == "Yes");
 }
 
-void showMenu(const std::string& userEmail, const std::string& userName);
+const int SHIFT = 3; // Shift for Caesar cipher
+
+void updatePassword(User& user, const std::string& label) {
+    PasswordNode* curr = user.passwordsHead;
+    while (curr != nullptr) {
+        if (curr->label == label) {
+            std::string oldPassword;
+            std::cout << "Enter the old password for label " << label << ": ";
+            std::cin >> oldPassword;
+            if (caesarDecrypt(curr->password, SHIFT) != oldPassword) { // Decrypt and compare
+                std::cout << "Incorrect old password.\n";
+                return;
+            }
+            std::string newPassword;
+            std::cout << "Enter the new password: ";
+            std::cin >> newPassword;
+
+            curr->password = caesarEncrypt(newPassword, SHIFT); // Encrypt new password
+            std::cout << "Password updated.\n";
+            return;
+        }
+        curr = curr->next;
+    }
+
+    std::cout << "Password label not found.\n";
+}
+
+void displayUserPasswords(const User& user) {
+    std::cout << user.name << "'s passwords:\n";
+    for (PasswordNode* curr = user.passwordsHead; curr != nullptr; curr = curr->next) {
+        // Decrypt here inside the loop
+        std::string decryptedPassword = caesarDecrypt(curr->password, SHIFT);
+        std::cout << "Label: " << curr->label << ", Password: " << decryptedPassword << "\n";
+    }
+}
+
+void showMenu(User& user); // Function prototype modification
+
+void addPassword(User& user, const std::string& label, const std::string& password) {
+    // Encrypt the password before adding
+    std::string encryptedPassword = caesarEncrypt(password, SHIFT);
+    PasswordNode* newNode = new PasswordNode(label, encryptedPassword);
+    if (user.passwordsHead == nullptr) {
+        user.passwordsHead = newNode;
+    } else {
+        PasswordNode* current = user.passwordsHead;
+        while (current->next != nullptr) {
+            current = current->next;
+        }
+        current->next = newNode;
+    }
+
+    // Append the new password to the user's file
+    std::ofstream userFile(user.email + ".txt", std::ios::app); // Open in append mode
+    if (userFile.is_open()) {
+        userFile << label << '\n' << encryptedPassword << '\n';
+        userFile.close();
+    } else {
+        std::cout << "Failed to open the file for appending a new password.\n";
+    }
+
+    std::cout << "Password for '" << label << "' added.\n";
+}
 
 void showUserPasswords(const std::string& userEmail) {
     std::ifstream file(userEmail + ".txt");
-    if (!file.is_open() || file.peek() == std::ifstream::traits_type::eof()) {
+    if (!file) {
         std::cout << "No passwords stored.\n";
         return;
     }
@@ -55,55 +201,72 @@ void showUserPasswords(const std::string& userEmail) {
     std::string storedEmail, storedPassword, name;
     std::getline(file, storedEmail); // Skip stored email
     std::getline(file, storedPassword); // Skip stored password
-    std::getline(file, name); // Get the name for personalized message
+    std::getline(file, name); // Skip name for now
 
     std::string label, password;
-    bool hasPasswords = false;
-    std::cout << name << "'s passwords:\n"; // Display using name for a personal touch.
     while (file >> label >> password) {
-        hasPasswords = true;
         std::cout << "Label: " << label << ", Password: " << password << '\n';
     }
-
-    if (!hasPasswords) {
-        std::cout << "No passwords stored.\n";
-    }
-    file.close();
+    file.close(); // Close the file
 }
 
-void addUserPassword(const std::string& userEmail) {
-    std::ofstream file(userEmail + ".txt", std::ios::app);
-    if (!file.is_open()) {
-        std::cerr << "Unable to open file for user.\n";
-        return;
+void loadUserData() {
+    userCount = 0; // Reset user count in case this function is called multiple times
+    for (const auto& entry : std::filesystem::directory_iterator(".")) {
+        if (entry.is_regular_file() && entry.path().extension() == ".txt") {
+            std::ifstream userFile(entry.path());
+            if (!userFile.is_open()) continue; // Skip if the file cannot be opened
+
+            std::string email, password, name;
+            std::getline(userFile, email);
+            std::getline(userFile, password);
+            std::getline(userFile, name);
+
+            // Create a new user and add them to the users array
+            User* newUser = new User(name, email, password);
+            users[userCount++] = newUser; // Add user to the array and increment count
+
+            // Load passwords into the user's password list
+            std::string label, Spassword;
+            while (std::getline(userFile, label) && std::getline(userFile, Spassword)) {
+                PasswordNode* newNode = new PasswordNode(label, Spassword);
+                if (newUser->passwordsHead == nullptr) {
+                    newUser->passwordsHead = newNode;
+                }
+                else {
+                    PasswordNode* current = newUser->passwordsHead;
+                    while (current->next != nullptr) {
+                        current = current->next;
+                    }
+                    current->next = newNode;
+                }
+            }
+            userFile.close();
+        }
+        if (userCount >= MAX_USERS) break; // Stop if the maximum number of users is reached
     }
-
-    std::string label, passwordChoice, password;
-    std::cout << "Please enter a label for your new password: ";
-    getline(std::cin, label);
-    std::cout << "Would you like to generate a new password? (yes/no): ";
-    getline(std::cin, passwordChoice);
-
-    if (passwordChoice == "yes" || passwordChoice == "Yes") {
-        password = generateRandomPassword();
-        std::cout << "Generated Password: " << password << '\n';
-    } else {
-        std::cout << "Enter your password: ";
-        getline(std::cin, password);
-    }
-
-    // Write directly to avoid switching label and password.
-    file << label << ' ' << password << '\n';
-    std::cout << "Password added to your keychain.\n";
-    file.close();
 }
 
 void newUser() {
+    if (userCount >= MAX_USERS) {
+        std::cerr << "Maximum number of users reached. Cannot register more users.\n";
+        return;
+    }
+
     std::string name, email, password, confirmPassword;
     std::cout << "Enter your name: ";
     getline(std::cin, name);
     std::cout << "Enter your email: ";
     getline(std::cin, email);
+
+    // Check if the email already exists
+    for (int i = 0; i < userCount; i++) {
+        if (users[i]->email == email) {
+            std::cout << "A user with this email already exists. Please try a different email.\n";
+            return;
+        }
+    }
+
     std::cout << "Set your password: ";
     getline(std::cin, password);
     std::cout << "Confirm your password: ";
@@ -114,71 +277,105 @@ void newUser() {
         return;
     }
 
+    std::string encryptedPassword = caesarEncrypt(password, SHIFT); // Encrypt user's password
+    User* newUser = new User(name, email, encryptedPassword); // Use encrypted password
+    users[userCount++] = newUser;
+
     std::ofstream userFile(email + ".txt");
-    if (!userFile.is_open()) {
+    if (userFile.is_open()) {
+        userFile << email << '\n' << encryptedPassword << '\n' << name << '\n'; // Store encrypted info
+        userFile.close();
+    } else {
         std::cerr << "Error creating file for new user.\n";
-        return;
     }
-    userFile << email << '\n' << password << '\n' << name << '\n'; // Store email, password, and name
-    userFile.close();
 
     std::cout << "Thank you for signing up with us, " << name << "!\n";
-    showMenu(email, name); // Show the menu after signing up
+    showMenu(*newUser);
 }
 
-void showMenu(const std::string& userEmail, const std::string& userName) {
+void returningUser() {
+    std::string email, inputPassword;
+    std::cout << "Enter your email: ";
+    getline(std::cin, email);
+    std::cout << "Enter your password: ";
+    getline(std::cin, inputPassword);
+
+    for (int i = 0; i < userCount; ++i) {
+        if (users[i]->email == email) {
+            // Correctly use the encrypted password from the user struct
+            std::string decryptedUserPassword = caesarDecrypt(users[i]->password, SHIFT);
+            if (decryptedUserPassword == inputPassword) {
+                std::cout << "Welcome back, " << users[i]->name << "!\n";
+                showMenu(*users[i]);
+                return;
+            } else {
+                std::cout << "Invalid password.\n";
+                return;
+            }
+        }
+    }
+    std::cout << "User not found.\n";
+}
+
+void showMenu(User& user) {
     int choice;
     do {
-        std::cout << "\nHello, " << userName << "! What would you like to do today?\n";
+        std::cout << "\nHello, " << user.name << "! What would you like to do today?\n";
         std::cout << "1. View your registered passwords\n";
         std::cout << "2. Add a new password to your keychain\n";
-        std::cout << "3. Exit the application\nChoose an option: ";
+        std::cout << "3. Update one of your passwords\n";
+        std::cout << "4. Delete one of the registered passwords\n";
+        std::cout << "5. Exit the application\nChoose an option: ";
         std::cin >> choice;
         std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
 
         switch (choice) {
-            case 1:
-                showUserPasswords(userEmail);
-                break;
-            case 2:
-                addUserPassword(userEmail);
-                break;
-            case 3:
-                std::cout << "Goodbye, See you soon!\n";
-                return;
+        case 1:
+            displayUserPasswords(user);
+            break;
+        case 2: {
+            std::string label, password;
+            std::cout << "Please enter a label for your new password: ";
+            std::getline(std::cin, label);
+            std::cout << "Would you like to generate a new password? (yes/no): ";
+            std::string decision;
+            std::getline(std::cin, decision);
+            if (decision == "yes" || decision == "Yes") {
+                password = generateRandomPassword();
+                std::cout << "Generated Password: " << password << '\n';
+            }
+            else {
+                std::cout << "Enter your password: ";
+                std::getline(std::cin, password);
+            }
+            addPassword(user, label, password);
+            break;
         }
-    } while (choice != 3);
-}
-
-
-void returningUser() {
-    std::string email, password;
-    std::cout << "Enter your email: ";
-    getline(std::cin, email);
-    std::cout << "Enter your password: ";
-    getline(std::cin, password);
-
-    std::ifstream file(email + ".txt");
-    if (!file.is_open()) {
-        std::cout << "User not found.\n";
-        return;
-    }
-
-    std::string storedEmail, storedPassword, name;
-    getline(file, storedEmail); // First line is email
-    getline(file, storedPassword); // Second line is password
-    getline(file, name); // Third line is name
-    file.close();
-
-    if (email == storedEmail && password == storedPassword) {
-        std::cout << "Welcome back, " << name << "!\n";
-        showMenu(email, name);
-    } else {
-        std::cout << "Invalid email or password.\n";
-    }
+        case 3: {
+            displayUserPasswords(user); // Display passwords before updating
+            std::string label;
+            std::cout << "Enter the label of the password you want to update: ";
+            getline(std::cin, label);
+            updatePassword(user, label);
+            break; // Make sure to break after each case
+        }
+        case 4: {
+            displayUserPasswords(user); // Display passwords before deleting
+            std::string label;
+            std::cout << "Enter the label of the password you want to delete: ";
+            getline(std::cin, label);
+            deletePassword(user, label);
+            break; // Ensure there is a break here
+        }
+        case 5:
+            std::cout << "Goodbye, See you soon!\n";
+            return;
+        }
+    } while (true);
 }
 
 int main() {
+    loadUserData();
     std::cout << "Welcome to Rita's Password Manager!\n";
     std::cout << "1. New user\n2. Returning user\nChoose an option: ";
     int option;
@@ -187,13 +384,12 @@ int main() {
 
     if (option == 1) {
         newUser(); // Assume newUser() is modified to call showMenu() with appropriate parameters.
-    } else if (option == 2) {
+    }
+    else if (option == 2) {
         returningUser();
-    } else {
+    }
+    else {
         std::cout << "Invalid option.\n";
     }
-
-    // No dynamic allocation was used, so no need for cleanup here.
-
     return 0;
 }
